@@ -21,7 +21,8 @@ monitor_control/
 ├─ oled_i2c.h
 ├─ oled_i2c.c
 └─ fonts/
-└─ NotoSerifThai.ttf
+   └─ NotoSerifThai.ttf
+
 
 
 ---
