@@ -25,8 +25,17 @@
 // GPIO
 static struct gpiod_chip *chip;
 static struct gpiod_line *do_sw;
+static struct gpiod_line *btn_down;
+static struct gpiod_line *btn_up;
+static struct gpiod_line *btn_done;
 static struct gpiod_line *monitor_keys[NUM_KEYS];
-int gpio_lines[NUM_KEYS] = {7,8,9};
+
+// GPIO LED
+static struct gpiod_line *led_red;
+static struct gpiod_line *led_yellow;
+static struct gpiod_line *led_green;
+
+int gpio_lines[NUM_KEYS] = {7,8,9};  // monitor1-3
 const char *key_names[NUM_KEYS] = {"MON1","MON2","MON3"};
 
 // Network
@@ -42,7 +51,15 @@ FT_Face face;
 
 // Signal handler
 void intHandler(int dummy){
+    // ปิด LED ทั้งหมดก่อนออก
+    gpiod_line_set_value(led_red, 0);
+    gpiod_line_set_value(led_yellow, 0);
+    gpiod_line_set_value(led_green, 0);
+
     gpiod_line_release(do_sw);
+    gpiod_line_release(btn_down);
+    gpiod_line_release(btn_up);
+    gpiod_line_release(btn_done);
     for(int i=0;i<NUM_KEYS;i++) gpiod_line_release(monitor_keys[i]);
     gpiod_chip_close(chip);
     close(sockfd);
@@ -61,8 +78,8 @@ void load_env_config() {
     monitor_ips[2] = getenv("MONITOR_IP3");
 
     if (!monitor_ips[0]) monitor_ips[0] = "192.168.1.244";
-    if (!monitor_ips[1]) monitor_ips[1] = "192.168.1.243";
-    if (!monitor_ips[2]) monitor_ips[2] = "192.168.1.242";
+    if (!monitor_ips[1]) monitor_ips[1] = "192.168.1.244";
+    if (!monitor_ips[2]) monitor_ips[2] = "192.168.1.244";
 
     char *port_env = getenv("MONITOR_PORT");
     monitor_port = port_env ? atoi(port_env) : 5000;
@@ -148,10 +165,49 @@ int main(){
     chip = gpiod_chip_open_by_name("gpiochip0");
     if(!chip){ perror("Open chip failed"); return 1; }
 
+
+led_red    = gpiod_chip_get_line(chip, 0); // R
+led_yellow = gpiod_chip_get_line(chip, 2); // Y
+led_green  = gpiod_chip_get_line(chip, 3); // G
+
+if (!led_red || !led_yellow || !led_green) {
+    perror("Get LED line failed");
+    return 1;
+}
+
+if (gpiod_line_request_output(led_red, "led_red", 0) < 0) {
+    perror("Request output LED R failed");
+    return 1;
+}
+if (gpiod_line_request_output(led_yellow, "led_yellow", 0) < 0) {
+    perror("Request output LED Y failed");
+    return 1;
+}
+if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
+    perror("Request output LED G failed");
+    return 1;
+}
+
+
     // ปุ่ม DO
     do_sw = gpiod_chip_get_line(chip,6);
     if(!do_sw){ perror("Get line failed"); return 1; }
     if(gpiod_line_request_input(do_sw,"sw_do")<0){ perror("Request input failed"); return 1; }
+
+    // ปุ่ม DOWN
+    btn_down = gpiod_chip_get_line(chip,21);
+    if(!btn_down){ perror("Get line failed"); return 1; }
+    if(gpiod_line_request_input(btn_down,"sw_down")<0){ perror("Request input failed"); return 1; }
+
+    // ปุ่ม UP (GPIOA20 / PCM0_DOUT)
+    btn_up = gpiod_chip_get_line(chip,20);
+    if(!btn_up){ perror("Get line failed"); return 1; }
+    if(gpiod_line_request_input(btn_up,"sw_up")<0){ perror("Request input failed"); return 1; }
+
+    // ปุ่ม DONE (SPDIF-OUT / GPIOA17)
+    btn_done = gpiod_chip_get_line(chip,17);
+    if(!btn_done){ perror("Get line failed"); return 1; }
+    if(gpiod_line_request_input(btn_done,"sw_done")<0){ perror("Request input failed"); return 1; }
 
     // ปุ่ม monitor
     for(int i=0;i<NUM_KEYS;i++){
@@ -175,9 +231,14 @@ int main(){
     display_monitor_status(current_monitor); // แสดง monitor เริ่มต้น + check
 
     int last_do_state=1;
+    int last_down_state=1;
+    int last_up_state=1;
+    int last_done_state=1;
     int last_monitor_state[NUM_KEYS]={1,1,1};
 
     time_t last_check = 0;
+
+    gpiod_line_set_value(led_red, 1);
 
     while(1){
         // ปุ่ม DO
@@ -188,11 +249,49 @@ int main(){
             if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
                 perror("Send failed");
 
-            // แสดง OLED ว่าส่ง DO
             char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
             render_monitor_text(buf,"ทำรายการ");
         }
         last_do_state=val_do;
+
+        // ปุ่ม DOWN
+        int val_down=read_line_debounced(btn_down);
+        if(val_down==0 && last_down_state!=0){
+            printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
+            const char *msg="down";
+            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                perror("Send failed");
+
+            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            render_monitor_text(buf,"ลง");
+        }
+        last_down_state=val_down;
+
+        // ปุ่ม UP
+        int val_up = read_line_debounced(btn_up);
+        if(val_up==0 && last_up_state!=0){
+            printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
+            const char *msg="up";
+            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                perror("Send failed");
+
+            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            render_monitor_text(buf,"ขึ้น");
+        }
+        last_up_state = val_up;
+
+        // ปุ่ม DONE
+        int val_done = read_line_debounced(btn_done);
+        if(val_done==0 && last_done_state!=0){
+            printf("DONE pressed! Sending 'done' to monitor %d\n",current_monitor+1);
+            const char *msg="done";
+            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                perror("Send failed");
+
+            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            render_monitor_text(buf,"เสร็จ");
+        }
+        last_done_state = val_done;
 
         // ปุ่ม monitor
         for(int i=0;i<NUM_KEYS;i++){
@@ -200,28 +299,46 @@ int main(){
             if(val==0 && last_monitor_state[i]!=0){
                 set_monitor(i);
                 display_monitor_status(i);
+
+                // ส่งข้อความ UDP ไป monitor ที่เลือก
+                char msg[4];
+                snprintf(msg,sizeof(msg),"m%d",i+1);
+                if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                    perror("Send failed");
+
+                printf("เลือก monitor%d\n", i+1);
+
+                // แสดงผลบน OLED
+                char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",i+1);
+                render_monitor_text(buf,"เลือกจอ");
+
+        // ✅ ควบคุม LED ตาม monitor
+        gpiod_line_set_value(led_red,   i==0 ? 1 : 0);   // monitor1 -> R
+        gpiod_line_set_value(led_yellow,i==1 ? 1 : 0);   // monitor2 -> Y
+        gpiod_line_set_value(led_green, i==2 ? 1 : 0);   // monitor3 -> G
+
             }
             last_monitor_state[i]=val;
         }
 
-    if(difftime(time(NULL), last_check) >= 5){
-        oled_clear_line(56, 16); // เคลียร์แถวล่าง
+        // ตรวจสอบ connection ทุก 5 วินาที
+        if(difftime(time(NULL), last_check) >= 5){
+            oled_clear_line(56, 16); // เคลียร์แถวล่าง
 
-        char buf[32];
-        snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-        int connected = check_monitor();
-        char buf2[32];
-        snprintf(buf2,sizeof(buf2),connected?"เชื่อมต่อ":"            ");
-        render_monitor_text(buf,buf2);
+            char buf[32];
+            snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            int connected = check_monitor();
+            char buf2[32];
+            snprintf(buf2,sizeof(buf2),connected?"เชื่อมต่อ":"            ");
+            render_monitor_text(buf,buf2);
 
-        last_check = time(NULL);
-    }
-
+            last_check = time(NULL);
+        }
 
         usleep(20000);
     }
 
-    // Clean FreeType (ถึงจะไม่ถึงตรงนี้)
+    // Clean FreeType
     FT_Done_Face(face);
     FT_Done_FreeType(ft);
 
