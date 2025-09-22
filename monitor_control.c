@@ -1,6 +1,7 @@
 #include <gpiod.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <time.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
@@ -238,6 +239,10 @@ if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
 
     time_t last_check = 0;
 
+    time_t shutdown_start = 0;  // เก็บเวลาที่เริ่มกด 3 ปุ่ม
+    int led_blink_state = 0;    // สำหรับกระพริบ LED
+    time_t last_blink = 0;      // เก็บเวลาล่าสุดที่สลับไฟ
+
     gpiod_line_set_value(led_red, 1);
 
     while(1){
@@ -312,14 +317,74 @@ if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
                 char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",i+1);
                 render_monitor_text(buf,"เลือกจอ");
 
-        // ✅ ควบคุม LED ตาม monitor
-        gpiod_line_set_value(led_red,   i==0 ? 1 : 0);   // monitor1 -> R
-        gpiod_line_set_value(led_yellow,i==1 ? 1 : 0);   // monitor2 -> Y
-        gpiod_line_set_value(led_green, i==2 ? 1 : 0);   // monitor3 -> G
-
+                // ✅ ควบคุม LED ตาม monitor
+                gpiod_line_set_value(led_red,   i==0 ? 1 : 0);   // monitor1 -> R
+                gpiod_line_set_value(led_yellow,i==1 ? 1 : 0);   // monitor2 -> Y
+                gpiod_line_set_value(led_green, i==2 ? 1 : 0);   // monitor3 -> G
             }
             last_monitor_state[i]=val;
         }
+
+// ปุ่ม monitor
+int pressed_all = 1;
+for(int i=0;i<NUM_KEYS;i++){
+    int val = read_line_debounced(monitor_keys[i]);
+    if(val != 0) pressed_all = 0;
+    last_monitor_state[i] = val;
+}
+
+if(pressed_all){
+    if(shutdown_start == 0){
+        shutdown_start = time(NULL);  // เริ่มจับเวลา
+        render_monitor_text("Hold 3s","เพื่อปิดเครื่อง");  // แสดงบน OLED
+        last_blink = shutdown_start;
+    } else {
+        time_t now = time(NULL);
+
+        // กระพริบ LED ทุก 0.5 วินาที
+        if(difftime(now, last_blink) >= 0.5){
+            led_blink_state = !led_blink_state;
+            gpiod_line_set_value(led_red, led_blink_state);
+            gpiod_line_set_value(led_yellow, led_blink_state);
+            gpiod_line_set_value(led_green, led_blink_state);
+            last_blink = now;
+        }
+
+        // ถ้าค้าง >= 3 วินาที -> Shutdown
+        if(difftime(now, shutdown_start) >= 3.0){
+            printf("กดปุ่มทั้ง 3 พร้อมกันค้าง 3 วินาที -> Shutdown\n");
+            render_monitor_text("Shutdown","กำลังปิดเครื่อง");
+            system("shutdown -h now");
+            return 0;
+        }
+    }
+} else {
+if(shutdown_start != 0){
+    // reset ถ้ามีปุ่มปล่อย
+    shutdown_start = 0;
+
+    // ปิด LED กระพริบ -> กลับปกติ
+    gpiod_line_set_value(led_red, 0);
+    gpiod_line_set_value(led_yellow,0);
+    gpiod_line_set_value(led_green, 0);
+
+    // ล้างข้อความ OLED
+    render_monitor_text("","");  
+
+    // ✅ ตั้ง monitor1 เป็นค่าเริ่มต้น
+    set_monitor(0);
+    display_monitor_status(0);
+
+    // ปรับ LED ตาม monitor1
+    gpiod_line_set_value(led_red,   1);   // monitor1 -> R
+    gpiod_line_set_value(led_yellow,0);
+    gpiod_line_set_value(led_green, 0);
+
+    // แสดงบน OLED ว่าเลือก monitor1
+    render_monitor_text("หน้าจอ: 1","เลือกจอ");
+}
+
+}
 
         // ตรวจสอบ connection ทุก 5 วินาที
         if(difftime(time(NULL), last_check) >= 5){
