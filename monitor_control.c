@@ -137,14 +137,6 @@ int read_line_debounced(struct gpiod_line *line){
     return last_val;
 }
 
-// render ข้อความบน OLED
-//void render_monitor_text(const char *line1, const char *line2, int font_size){
-//    oled_clear();
-//    render_text(line1,0,30,face);   // บรรทัดบน
-//    render_text(line2,0,60,face);   // บรรทัดล่าง
-//    oled_display();
-//}
-
 void render_monitor_text(const char *line1, const char *line2, int font_size) {
     // ล้างหน้าจอ
     oled_clear();
@@ -209,28 +201,27 @@ int main(){
     if(!chip){ perror("Open chip failed"); return 1; }
 
 
-led_red    = gpiod_chip_get_line(chip, 0); // R
-led_yellow = gpiod_chip_get_line(chip, 2); // Y
-led_green  = gpiod_chip_get_line(chip, 3); // G
+    led_red    = gpiod_chip_get_line(chip, 0); // R
+    led_yellow = gpiod_chip_get_line(chip, 2); // Y
+    led_green  = gpiod_chip_get_line(chip, 3); // G
 
-if (!led_red || !led_yellow || !led_green) {
-    perror("Get LED line failed");
-    return 1;
-}
+    if (!led_red || !led_yellow || !led_green) {
+        perror("Get LED line failed");
+        return 1;
+    }
 
-if (gpiod_line_request_output(led_red, "led_red", 0) < 0) {
-    perror("Request output LED R failed");
-    return 1;
-}
-if (gpiod_line_request_output(led_yellow, "led_yellow", 0) < 0) {
-    perror("Request output LED Y failed");
-    return 1;
-}
-if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
-    perror("Request output LED G failed");
-    return 1;
-}
-
+    if (gpiod_line_request_output(led_red, "led_red", 0) < 0) {
+        perror("Request output LED R failed");
+        return 1;
+    }
+    if (gpiod_line_request_output(led_yellow, "led_yellow", 0) < 0) {
+        perror("Request output LED Y failed");
+        return 1;
+    }
+    if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
+        perror("Request output LED G failed");
+        return 1;
+    }
 
     // ปุ่ม DO
     do_sw = gpiod_chip_get_line(chip,6);
@@ -301,27 +292,8 @@ if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
         }
         last_do_state=val_do;
 
-        // ปุ่ม DOWN
-//        int val_down=read_line_debounced(btn_down);
-//        if(val_down==0 && last_down_state!=0){
-//            printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
-//            const char *msg="down";
-//            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-//                perror("Send failed");
-
-//            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-//            render_monitor_text(buf,"ลง");
-//        }
-//        last_down_state=val_down;
-
-        // ปุ่ม UP
-//        int val_up = read_line_debounced(btn_up);
-//        if(val_up==0 && last_up_state!=0){
-//            printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
-//            const char *msg="up";
-//            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-int val_down = read_line_debounced(btn_down);  // 0 = pressed
-int val_up   = read_line_debounced(btn_up);    // 0 = pressed
+        int val_down = read_line_debounced(btn_down);  // 0 = pressed
+        int val_up   = read_line_debounced(btn_up);    // 0 = pressed
 
 // ตรวจว่ากดพร้อมกันหรือไม่
 if (val_down == 1 && val_up == 1) {
