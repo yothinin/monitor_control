@@ -14,9 +14,10 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include "oled_i2c.h"
+#include "getip.h"
 
-#define DEBOUNCE_DELAY_US 5000
-#define DEBOUNCE_COUNT 5
+#define DEBOUNCE_DELAY_US 1000
+#define DEBOUNCE_COUNT 1
 #define MAX_MONITORS 3
 #define NUM_KEYS 3
 #define FONT_PATH "./fonts/NotoSerifThai.ttf"
@@ -46,6 +47,9 @@ char *monitor_ips[MAX_MONITORS];
 int monitor_port;
 int current_monitor = 0;
 
+int combo_start = 0;
+time_t combo_active = 0;
+
 // FreeType
 FT_Library ft;
 FT_Face face;
@@ -74,18 +78,35 @@ void intHandler(int dummy){
 
 // โหลด config จาก env
 void load_env_config() {
-    monitor_ips[0] = getenv("MONITOR_IP1");
-    monitor_ips[1] = getenv("MONITOR_IP2");
-    monitor_ips[2] = getenv("MONITOR_IP3");
+    FILE *fp = fopen(".env", "r");
+    if (!fp) {
+        perror("fopen .env");
+        return;
+    }
 
-    if (!monitor_ips[0]) monitor_ips[0] = "192.168.1.244";
-    if (!monitor_ips[1]) monitor_ips[1] = "192.168.1.244";
-    if (!monitor_ips[2]) monitor_ips[2] = "192.168.1.244";
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        char *key = strtok(line, "=");
+        char *value = strtok(NULL, "\n");
 
-    char *port_env = getenv("MONITOR_PORT");
-    monitor_port = port_env ? atoi(port_env) : 5000;
+        if (!key || !value) continue;
+
+        // ตัดช่องว่าง
+        while (*value == ' ') value++;
+
+        if (strcmp(key, "MONITOR_IP1") == 0) monitor_ips[0] = strdup(value);
+        else if (strcmp(key, "MONITOR_IP2") == 0) monitor_ips[1] = strdup(value);
+        else if (strcmp(key, "MONITOR_IP3") == 0) monitor_ips[2] = strdup(value);
+        else if (strcmp(key, "MONITOR_PORT") == 0) monitor_port = atoi(value);
+    }
+    fclose(fp);
+
+    // ค่า default ถ้าไม่มีใน .env
+    if (!monitor_ips[0]) monitor_ips[0] = strdup("192.168.1.111");
+    if (!monitor_ips[1]) monitor_ips[1] = strdup("192.168.1.111");
+    if (!monitor_ips[2]) monitor_ips[2] = strdup("192.168.1.130");
+    if (!monitor_port) monitor_port = 5000;
 }
-
 // ตั้ง monitor ปัจจุบัน
 void set_monitor(int idx) {
     if(idx < 0 || idx >= MAX_MONITORS) return;
@@ -117,10 +138,25 @@ int read_line_debounced(struct gpiod_line *line){
 }
 
 // render ข้อความบน OLED
-void render_monitor_text(const char *line1, const char *line2){
+//void render_monitor_text(const char *line1, const char *line2, int font_size){
+//    oled_clear();
+//    render_text(line1,0,30,face);   // บรรทัดบน
+//    render_text(line2,0,60,face);   // บรรทัดล่าง
+//    oled_display();
+//}
+
+void render_monitor_text(const char *line1, const char *line2, int font_size) {
+    // ล้างหน้าจอ
     oled_clear();
-    render_text(line1,0,30,face);   // บรรทัดบน
-    render_text(line2,0,60,face);   // บรรทัดล่าง
+
+    // ตั้งขนาดฟอนต์
+    FT_Set_Pixel_Sizes(face, 0, font_size);
+
+    // แสดงข้อความ
+    render_text(line1, 0, 30, face); // บรรทัดบน
+    render_text(line2, 0, 60, face); // บรรทัดล่าง
+
+    // แสดงผลบน OLED
     oled_display();
 }
 
@@ -156,10 +192,16 @@ void display_monitor_status(int idx){
     int connected = check_monitor();
     char buf2[32];
     snprintf(buf2,sizeof(buf2),connected?"เชื่อมต่อ":"            ");
-    render_monitor_text(buf,buf2);
+    render_monitor_text(buf,buf2,FONT_SIZE);
 }
 
 int main(){
+    setvbuf(stdout, NULL, _IOLBF, 0);   // line-buffered stdout
+    setvbuf(stderr, NULL, _IONBF, 0);   // unbuffered stderr
+
+    printf("monitor_control starting...\n");
+    fflush(stdout);
+
     signal(SIGINT,intHandler);
     load_env_config();
 
@@ -255,46 +297,98 @@ if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
                 perror("Send failed");
 
             char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-            render_monitor_text(buf,"ทำรายการ");
+            render_monitor_text(buf,"ทำรายการ", FONT_SIZE);
         }
         last_do_state=val_do;
 
         // ปุ่ม DOWN
-        int val_down=read_line_debounced(btn_down);
-        if(val_down==0 && last_down_state!=0){
-            printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
-            const char *msg="down";
-            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-                perror("Send failed");
+//        int val_down=read_line_debounced(btn_down);
+//        if(val_down==0 && last_down_state!=0){
+//            printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
+//            const char *msg="down";
+//            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+//                perror("Send failed");
 
-            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-            render_monitor_text(buf,"ลง");
-        }
-        last_down_state=val_down;
+//            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+//            render_monitor_text(buf,"ลง");
+//        }
+//        last_down_state=val_down;
 
         // ปุ่ม UP
-        int val_up = read_line_debounced(btn_up);
-        if(val_up==0 && last_up_state!=0){
-            printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
-            const char *msg="up";
-            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-                perror("Send failed");
+//        int val_up = read_line_debounced(btn_up);
+//        if(val_up==0 && last_up_state!=0){
+//            printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
+//            const char *msg="up";
+//            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+int val_down = read_line_debounced(btn_down);  // 0 = pressed
+int val_up   = read_line_debounced(btn_up);    // 0 = pressed
 
-            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-            render_monitor_text(buf,"ขึ้น");
+// ตรวจว่ากดพร้อมกันหรือไม่
+if (val_down == 1 && val_up == 1) {
+    if (!combo_active) {
+        // เพิ่งกดพร้อมกันครั้งแรก
+        combo_start = time(NULL);
+        combo_active = 1;
+    } else {
+        // กำลังกดค้าง
+        if (time(NULL) - combo_start >= 3) {
+            char ip[64];
+            if (get_ip_address("eth0", ip, sizeof(ip)) == 0) {
+                printf("📡 IP Address: %s\n", ip);
+                render_monitor_text("IP Address", ip, 18);
+            } else {
+                render_monitor_text("IP Address", "Error", 18);
+            }
+            combo_active = 0;   // reset ไม่ให้โชว์ซ้ำ
         }
-        last_up_state = val_up;
+    }
+} else {
+    // ปล่อยปุ่ม
+    combo_active = 0;
+    combo_start = 0;
+}
+
+// ====== โค้ดปุ่ม DOWN ปกติ ======
+if (val_down==1 && last_down_state!=1){
+    printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
+    const char *msg="down";
+    if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+        perror("Send failed");
+
+    char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+    render_monitor_text(buf,"ลง", FONT_SIZE);
+}
+last_down_state=val_down;
+
+// ====== โค้ดปุ่ม UP ปกติ ======
+if (val_up==1 && last_up_state!=1){
+    printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
+    const char *msg="up";
+    if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+        perror("Send failed");
+
+    char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+    render_monitor_text(buf,"ขึ้น", FONT_SIZE);
+}
+last_up_state=val_up;//                perror("Send failed");
+
+//            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+//            render_monitor_text(buf,"ขึ้น");
+//        }
+//        last_up_state = val_up;
+
+
 
         // ปุ่ม DONE
         int val_done = read_line_debounced(btn_done);
-        if(val_done==0 && last_done_state!=0){
+        if(val_done==1 && last_done_state!=1){
             printf("DONE pressed! Sending 'done' to monitor %d\n",current_monitor+1);
             const char *msg="done";
             if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
                 perror("Send failed");
 
             char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-            render_monitor_text(buf,"เสร็จ");
+            render_monitor_text(buf,"เสร็จ", FONT_SIZE);
         }
         last_done_state = val_done;
 
@@ -315,7 +409,7 @@ if (gpiod_line_request_output(led_green, "led_green", 0) < 0) {
 
                 // แสดงผลบน OLED
                 char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",i+1);
-                render_monitor_text(buf,"เลือกจอ");
+                render_monitor_text(buf,"เลือกจอ", FONT_SIZE);
 
                 // ✅ ควบคุม LED ตาม monitor
                 gpiod_line_set_value(led_red,   i==0 ? 1 : 0);   // monitor1 -> R
@@ -336,7 +430,7 @@ for(int i=0;i<NUM_KEYS;i++){
 if(pressed_all){
     if(shutdown_start == 0){
         shutdown_start = time(NULL);  // เริ่มจับเวลา
-        render_monitor_text("Hold 3s","เพื่อปิดเครื่อง");  // แสดงบน OLED
+        render_monitor_text("Hold 3s","เพื่อปิดเครื่อง", 18);  // แสดงบน OLED
         last_blink = shutdown_start;
     } else {
         time_t now = time(NULL);
@@ -353,7 +447,7 @@ if(pressed_all){
         // ถ้าค้าง >= 3 วินาที -> Shutdown
         if(difftime(now, shutdown_start) >= 3.0){
             printf("กดปุ่มทั้ง 3 พร้อมกันค้าง 3 วินาที -> Shutdown\n");
-            render_monitor_text("Shutdown","กำลังปิดเครื่อง");
+            render_monitor_text("Shutdown","กำลังปิดเครื่อง", 18);
             system("shutdown -h now");
             return 0;
         }
@@ -369,7 +463,7 @@ if(shutdown_start != 0){
     gpiod_line_set_value(led_green, 0);
 
     // ล้างข้อความ OLED
-    render_monitor_text("","");  
+    render_monitor_text("","", FONT_SIZE);  
 
     // ✅ ตั้ง monitor1 เป็นค่าเริ่มต้น
     set_monitor(0);
@@ -381,7 +475,7 @@ if(shutdown_start != 0){
     gpiod_line_set_value(led_green, 0);
 
     // แสดงบน OLED ว่าเลือก monitor1
-    render_monitor_text("หน้าจอ: 1","เลือกจอ");
+    render_monitor_text("หน้าจอ: 1","เลือกจอ",FONT_SIZE);
 }
 
 }
@@ -395,7 +489,7 @@ if(shutdown_start != 0){
             int connected = check_monitor();
             char buf2[32];
             snprintf(buf2,sizeof(buf2),connected?"เชื่อมต่อ":"            ");
-            render_monitor_text(buf,buf2);
+            render_monitor_text(buf,buf2, FONT_SIZE);
 
             last_check = time(NULL);
         }

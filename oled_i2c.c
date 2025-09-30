@@ -14,6 +14,7 @@
 static int i2c_fd = -1;
 static uint8_t buffer[OLED_WIDTH*OLED_HEIGHT/8];
 
+
 // ส่งคำสั่งไป OLED
 static void oled_write_cmd(uint8_t cmd){
     uint8_t data[2]={0x00,cmd};
