@@ -295,61 +295,54 @@ int main(){
         int val_down = read_line_debounced(btn_down);  // 0 = pressed
         int val_up   = read_line_debounced(btn_up);    // 0 = pressed
 
-// ตรวจว่ากดพร้อมกันหรือไม่
-if (val_down == 1 && val_up == 1) {
-    if (!combo_active) {
-        // เพิ่งกดพร้อมกันครั้งแรก
-        combo_start = time(NULL);
-        combo_active = 1;
-    } else {
-        // กำลังกดค้าง
-        if (time(NULL) - combo_start >= 3) {
-            char ip[64];
-            if (get_ip_address("eth0", ip, sizeof(ip)) == 0) {
-                printf("📡 IP Address: %s\n", ip);
-                render_monitor_text("IP Address", ip, 18);
+        // ตรวจว่ากดพร้อมกันหรือไม่
+        if (val_down == 1 && val_up == 1) {
+            if (!combo_active) {
+                // เพิ่งกดพร้อมกันครั้งแรก
+                combo_start = time(NULL);
+                combo_active = 1;
             } else {
-                render_monitor_text("IP Address", "Error", 18);
+                // กำลังกดค้าง
+                if (time(NULL) - combo_start >= 3) {
+                    char ip[64];
+                    if (get_ip_address("eth0", ip, sizeof(ip)) == 0) {
+                        printf("📡 IP Address: %s\n", ip);
+                        render_monitor_text("IP Address", ip, 18);
+                    } else {
+                        render_monitor_text("IP Address", "Error", 18);
+                    }
+                    combo_active = 0;   // reset ไม่ให้โชว์ซ้ำ
+                }
             }
-            combo_active = 0;   // reset ไม่ให้โชว์ซ้ำ
+        } else {
+            // ปล่อยปุ่ม
+            combo_active = 0;
+            combo_start = 0;
         }
-    }
-} else {
-    // ปล่อยปุ่ม
-    combo_active = 0;
-    combo_start = 0;
-}
 
-// ====== โค้ดปุ่ม DOWN ปกติ ======
-if (val_down==1 && last_down_state!=1){
-    printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
-    const char *msg="down";
-    if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-        perror("Send failed");
+        // ====== โค้ดปุ่ม DOWN ปกติ ======
+        if (val_down==1 && last_down_state!=1){
+            printf("DOWN pressed! Sending 'down' to monitor %d\n",current_monitor+1);
+            const char *msg="down";
+            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                perror("Send failed");
 
-    char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-    render_monitor_text(buf,"ลง", FONT_SIZE);
-}
-last_down_state=val_down;
+            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            render_monitor_text(buf,"ลง", FONT_SIZE);
+        }
+        last_down_state=val_down;
 
-// ====== โค้ดปุ่ม UP ปกติ ======
-if (val_up==1 && last_up_state!=1){
-    printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
-    const char *msg="up";
-    if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
-        perror("Send failed");
+        // ====== โค้ดปุ่ม UP ปกติ ======
+        if (val_up==1 && last_up_state!=1){
+            printf("UP pressed! Sending 'up' to monitor %d\n",current_monitor+1);
+            const char *msg="up";
+            if(sendto(sockfd,msg,strlen(msg),0,(struct sockaddr*)&dest_addr,sizeof(dest_addr))<0)
+                perror("Send failed");
 
-    char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-    render_monitor_text(buf,"ขึ้น", FONT_SIZE);
-}
-last_up_state=val_up;//                perror("Send failed");
-
-//            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
-//            render_monitor_text(buf,"ขึ้น");
-//        }
-//        last_up_state = val_up;
-
-
+            char buf[32]; snprintf(buf,sizeof(buf),"หน้าจอ: %d",current_monitor+1);
+            render_monitor_text(buf,"ขึ้น", FONT_SIZE);
+        }
+        last_up_state=val_up;//                perror("Send failed");
 
         // ปุ่ม DONE
         int val_done = read_line_debounced(btn_done);
@@ -391,66 +384,65 @@ last_up_state=val_up;//                perror("Send failed");
             last_monitor_state[i]=val;
         }
 
-// ปุ่ม monitor
-int pressed_all = 1;
-for(int i=0;i<NUM_KEYS;i++){
-    int val = read_line_debounced(monitor_keys[i]);
-    if(val != 0) pressed_all = 0;
-    last_monitor_state[i] = val;
-}
-
-if(pressed_all){
-    if(shutdown_start == 0){
-        shutdown_start = time(NULL);  // เริ่มจับเวลา
-        render_monitor_text("Hold 3s","เพื่อปิดเครื่อง", 18);  // แสดงบน OLED
-        last_blink = shutdown_start;
-    } else {
-        time_t now = time(NULL);
-
-        // กระพริบ LED ทุก 0.5 วินาที
-        if(difftime(now, last_blink) >= 0.5){
-            led_blink_state = !led_blink_state;
-            gpiod_line_set_value(led_red, led_blink_state);
-            gpiod_line_set_value(led_yellow, led_blink_state);
-            gpiod_line_set_value(led_green, led_blink_state);
-            last_blink = now;
+        // ปุ่ม monitor
+        int pressed_all = 1;
+        for(int i=0;i<NUM_KEYS;i++){
+            int val = read_line_debounced(monitor_keys[i]);
+            if(val != 0) pressed_all = 0;
+            last_monitor_state[i] = val;
         }
 
-        // ถ้าค้าง >= 3 วินาที -> Shutdown
-        if(difftime(now, shutdown_start) >= 3.0){
-            printf("กดปุ่มทั้ง 3 พร้อมกันค้าง 3 วินาที -> Shutdown\n");
-            render_monitor_text("Shutdown","กำลังปิดเครื่อง", 18);
-            system("shutdown -h now");
-            return 0;
+        if(pressed_all){
+            if(shutdown_start == 0){
+                shutdown_start = time(NULL);  // เริ่มจับเวลา
+                render_monitor_text("Hold 3s","เพื่อปิดเครื่อง", 18);  // แสดงบน OLED
+                last_blink = shutdown_start;
+            } else {
+                time_t now = time(NULL);
+
+                // กระพริบ LED ทุก 0.5 วินาที
+                if(difftime(now, last_blink) >= 0.5){
+                    led_blink_state = !led_blink_state;
+                    gpiod_line_set_value(led_red, led_blink_state);
+                    gpiod_line_set_value(led_yellow, led_blink_state);
+                    gpiod_line_set_value(led_green, led_blink_state);
+                    last_blink = now;
+                }
+
+                // ถ้าค้าง >= 3 วินาที -> Shutdown
+                if(difftime(now, shutdown_start) >= 3.0){
+                    printf("กดปุ่มทั้ง 3 พร้อมกันค้าง 3 วินาที -> Shutdown\n");
+                    render_monitor_text("Shutdown","กำลังปิดเครื่อง", 18);
+                    system("shutdown -h now");
+                    return 0;
+                }
+            }
+        } else {
+          if(shutdown_start != 0){
+              // reset ถ้ามีปุ่มปล่อย
+              shutdown_start = 0;
+
+              // ปิด LED กระพริบ -> กลับปกติ
+              gpiod_line_set_value(led_red, 0);
+              gpiod_line_set_value(led_yellow,0);
+              gpiod_line_set_value(led_green, 0);
+
+              // ล้างข้อความ OLED
+              render_monitor_text("","", FONT_SIZE);  
+
+              // ✅ ตั้ง monitor1 เป็นค่าเริ่มต้น
+              set_monitor(0);
+              display_monitor_status(0);
+
+              // ปรับ LED ตาม monitor1
+              gpiod_line_set_value(led_red,   1);   // monitor1 -> R
+              gpiod_line_set_value(led_yellow,0);
+              gpiod_line_set_value(led_green, 0);
+
+              // แสดงบน OLED ว่าเลือก monitor1
+              render_monitor_text("หน้าจอ: 1","เลือกจอ",FONT_SIZE);
+          }
         }
-    }
-} else {
-if(shutdown_start != 0){
-    // reset ถ้ามีปุ่มปล่อย
-    shutdown_start = 0;
-
-    // ปิด LED กระพริบ -> กลับปกติ
-    gpiod_line_set_value(led_red, 0);
-    gpiod_line_set_value(led_yellow,0);
-    gpiod_line_set_value(led_green, 0);
-
-    // ล้างข้อความ OLED
-    render_monitor_text("","", FONT_SIZE);  
-
-    // ✅ ตั้ง monitor1 เป็นค่าเริ่มต้น
-    set_monitor(0);
-    display_monitor_status(0);
-
-    // ปรับ LED ตาม monitor1
-    gpiod_line_set_value(led_red,   1);   // monitor1 -> R
-    gpiod_line_set_value(led_yellow,0);
-    gpiod_line_set_value(led_green, 0);
-
-    // แสดงบน OLED ว่าเลือก monitor1
-    render_monitor_text("หน้าจอ: 1","เลือกจอ",FONT_SIZE);
-}
-
-}
 
         // ตรวจสอบ connection ทุก 5 วินาที
         if(difftime(time(NULL), last_check) >= 5){
